@@ -58,6 +58,22 @@
 
 #define CAMWEBSRV_PIN_FLASH 4
 
+// Sequence capture sync signal pin (master output, slave interrupt input)
+#define CAMWEBSRV_PIN_SYNC 16
+
+// SDMMC (SDIO) 4-bit pin map for ESP32-CAM (AiThinker)
+// NOTE: GPIO4 is shared with the onboard flash LED on many ESP32-CAM boards.
+// If you use 4-bit SDMMC, you typically can't use the flash LED while SD is mounted.
+#define CAMWEBSRV_SDMMC_PIN_CLK 14
+#define CAMWEBSRV_SDMMC_PIN_CMD 15
+#define CAMWEBSRV_SDMMC_PIN_D0  2
+#define CAMWEBSRV_SDMMC_PIN_D1  4
+#define CAMWEBSRV_SDMMC_PIN_D2  12
+#define CAMWEBSRV_SDMMC_PIN_D3  13
+
+// SD card mount point for captures
+#define CAMWEBSRV_SDCARD_MOUNT_PATH "/sdcard"
+
 
 
 #endif

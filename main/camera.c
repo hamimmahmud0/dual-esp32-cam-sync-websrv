@@ -503,16 +503,22 @@ esp_err_t camwebsrv_camera_ctrl_set(camwebsrv_camera_t cam, const char *name, in
   {
     pcam->fps = (value < CAMWEBSRV_CAMERA_FPS_MIN ? CAMWEBSRV_CAMERA_FPS_MIN : (value > CAMWEBSRV_CAMERA_FPS_MAX ? CAMWEBSRV_CAMERA_FPS_MAX : value));
   }
+  else if (strcmp(name, "pixformat") == 0)
+  {
+    if (sensor->set_pixformat(sensor, (pixformat_t) value))
+    {
+      ESP_LOGE(CAMWEBSRV_TAG, "CAM camwebsrv_camera_ctrl_set(\"%s\", %d): sensor.set_pixformat() failed", name, value);
+      xSemaphoreGive(pcam->mutex1);
+      return ESP_FAIL;
+    }
+  }
   else if (strcmp(name, "framesize") == 0)
   {
-    if (sensor->pixformat == PIXFORMAT_JPEG)
+    if (sensor->set_framesize(sensor, (framesize_t) value))
     {
-      if (sensor->set_framesize(sensor, (framesize_t) value))
-      {
-        ESP_LOGE(CAMWEBSRV_TAG, "CAM camwebsrv_camera_ctrl_set(\"%s\", %d): sensor.set_framesize() failed", name, value);
-        xSemaphoreGive(pcam->mutex1);
-        return ESP_FAIL;
-      }
+      ESP_LOGE(CAMWEBSRV_TAG, "CAM camwebsrv_camera_ctrl_set(\"%s\", %d): sensor.set_framesize() failed", name, value);
+      xSemaphoreGive(pcam->mutex1);
+      return ESP_FAIL;
     }
   }
   else if (strcmp(name, "gainceiling") == 0)
@@ -722,6 +728,10 @@ int camwebsrv_camera_ctrl_get(camwebsrv_camera_t cam, const char *name)
   {
     rv = pcam->fps;
   }
+  else if (strcmp(name, "pixformat") == 0)
+  {
+    rv = sensor->pixformat;
+  }
   else if (strcmp(name, "framesize") == 0)
   {
     rv = sensor->status.framesize;
@@ -874,13 +884,7 @@ static esp_err_t _camwebsrv_camera_init(_camwebsrv_camera_t *pcam)
     sensor->set_saturation(sensor, -2);
   }
 
-  // assert pixformat
-
-  if (sensor->pixformat != PIXFORMAT_JPEG)
-  {
-      ESP_LOGE(CAMWEBSRV_TAG, "CAM _camwebsrv_camera_init(): sensor.pixformat is not JPEG");
-      return ESP_FAIL;
-  }
+  // pixformat can be changed at runtime; default is JPEG.
 
   // set framesize
 

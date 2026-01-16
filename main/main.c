@@ -8,6 +8,7 @@
 #include "ping.h"
 #include "storage.h"
 #include "wifi.h"
+#include "seqcap.h"
 
 #include <esp_log.h>
 #include <esp_err.h>
@@ -193,7 +194,7 @@ void app_main()
 
   // initialise web server
 
-  rv = camwebsrv_httpd_init(&httpd, sema);
+  rv = camwebsrv_httpd_init(&httpd, sema, cfgman);
 
   if (rv != ESP_OK)
   {
@@ -216,6 +217,13 @@ void app_main()
   while(1)
   {
     uint16_t nextevent = UINT16_MAX;
+
+    // During synchronized sequence capture we pause normal HTTP/ping processing.
+    if (camwebsrv_seqcap_is_active())
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
 
     // ping
 

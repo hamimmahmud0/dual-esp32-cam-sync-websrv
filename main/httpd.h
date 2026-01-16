@@ -12,11 +12,14 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#include "cfgman.h"
+
 typedef void *camwebsrv_httpd_t;
 
-esp_err_t camwebsrv_httpd_init(camwebsrv_httpd_t *httpd, SemaphoreHandle_t sema);
+esp_err_t camwebsrv_httpd_init(camwebsrv_httpd_t *httpd, SemaphoreHandle_t sema, camwebsrv_cfgman_t cfgman);
 esp_err_t camwebsrv_httpd_destroy(camwebsrv_httpd_t *httpd);
 esp_err_t camwebsrv_httpd_start(camwebsrv_httpd_t httpd);
+esp_err_t camwebsrv_httpd_stop(camwebsrv_httpd_t httpd);
 esp_err_t camwebsrv_httpd_process(camwebsrv_httpd_t httpd, uint16_t *nextevent);
 
 #endif

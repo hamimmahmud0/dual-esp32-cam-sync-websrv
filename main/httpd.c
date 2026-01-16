@@ -8,6 +8,7 @@
 #include "sclients.h"
 #include "storage.h"
 #include "vbytes.h"
+#include "seqcap.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -33,6 +34,8 @@
 #define _CAMWEBSRV_HTTPD_PATH_CONTROL "/control"
 #define _CAMWEBSRV_HTTPD_PATH_CAPTURE "/capture"
 #define _CAMWEBSRV_HTTPD_PATH_STREAM  "/stream"
+#define _CAMWEBSRV_HTTPD_PATH_SEQ_CAP "/seq_cap"
+#define _CAMWEBSRV_HTTPD_PATH_CAP_SEQ_INIT "/cap_seq_init"
 
 #define _CAMWEBSRV_HTTPD_RESP_STATUS_STR "\
 {\n\
@@ -74,6 +77,7 @@ typedef struct
   SemaphoreHandle_t sema;
   camwebsrv_camera_t cam;
   camwebsrv_sclients_t sclients;
+  camwebsrv_cfgman_t cfgman;
 } _camwebsrv_httpd_t;
 
 typedef struct
@@ -88,16 +92,18 @@ static esp_err_t _camwebsrv_httpd_handler_reset(httpd_req_t *req);
 static esp_err_t _camwebsrv_httpd_handler_control(httpd_req_t *req);
 static esp_err_t _camwebsrv_httpd_handler_capture(httpd_req_t *req);
 static esp_err_t _camwebsrv_httpd_handler_stream(httpd_req_t *req);
+static esp_err_t _camwebsrv_httpd_handler_seq_cap(httpd_req_t *req);
+static esp_err_t _camwebsrv_httpd_handler_cap_seq_init(httpd_req_t *req);
 static bool _camwebsrv_httpd_static_cb(const char *buf, size_t len, void *arg);
 static void _camwebsrv_httpd_worker(void *arg);
 static void _camwebsrv_httpd_noop(void *arg);
 
-esp_err_t camwebsrv_httpd_init(camwebsrv_httpd_t *httpd, SemaphoreHandle_t sema)
+esp_err_t camwebsrv_httpd_init(camwebsrv_httpd_t *httpd, SemaphoreHandle_t sema, camwebsrv_cfgman_t cfgman)
 {
   _camwebsrv_httpd_t *phttpd;
   esp_err_t rv;
 
-  if (httpd == NULL || sema == NULL)
+  if (httpd == NULL || sema == NULL || cfgman == NULL)
   {
     return ESP_ERR_INVALID_ARG;
   }
@@ -114,6 +120,7 @@ esp_err_t camwebsrv_httpd_init(camwebsrv_httpd_t *httpd, SemaphoreHandle_t sema)
   memset(phttpd, 0x00, sizeof(_camwebsrv_httpd_t));
 
   phttpd->sema = sema;
+  phttpd->cfgman = cfgman;
 
   rv = camwebsrv_camera_init(&(phttpd->cam));
 
@@ -137,6 +144,28 @@ esp_err_t camwebsrv_httpd_init(camwebsrv_httpd_t *httpd, SemaphoreHandle_t sema)
   *httpd = (camwebsrv_httpd_t) phttpd;
 
   return ESP_OK;
+}
+
+esp_err_t camwebsrv_httpd_stop(camwebsrv_httpd_t httpd)
+{
+  if (httpd == NULL)
+  {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  _camwebsrv_httpd_t *phttpd = (_camwebsrv_httpd_t *)httpd;
+  if (phttpd->handle == NULL)
+  {
+    return ESP_OK;
+  }
+
+  esp_err_t rv = httpd_stop(phttpd->handle);
+  if (rv != ESP_OK)
+  {
+    ESP_LOGW(CAMWEBSRV_TAG, "HTTPD camwebsrv_httpd_stop(): httpd_stop() failed: [%d]: %s", rv, esp_err_to_name(rv));
+  }
+  phttpd->handle = NULL;
+  return rv;
 }
 
 esp_err_t camwebsrv_httpd_destroy(camwebsrv_httpd_t *httpd)
@@ -188,6 +217,7 @@ esp_err_t camwebsrv_httpd_start(camwebsrv_httpd_t httpd)
   esp_err_t rv;
   httpd_uri_t uri;
   httpd_config_t c = HTTPD_DEFAULT_CONFIG();
+  c.max_uri_handlers = 32;   // was default (often 8)
 
   if (httpd == NULL)
   {
@@ -291,6 +321,26 @@ esp_err_t camwebsrv_httpd_start(camwebsrv_httpd_t httpd)
 
   httpd_register_uri_handler(phttpd->handle, &uri);
 
+  // register sequence capture (master)
+
+  memset(&uri, 0x00, sizeof(uri));
+
+  uri.uri     = _CAMWEBSRV_HTTPD_PATH_SEQ_CAP;
+  uri.method  = HTTP_GET;
+  uri.handler = _camwebsrv_httpd_handler_seq_cap;
+
+  httpd_register_uri_handler(phttpd->handle, &uri);
+
+  // register sequence capture init (slave)
+
+  memset(&uri, 0x00, sizeof(uri));
+
+  uri.uri     = _CAMWEBSRV_HTTPD_PATH_CAP_SEQ_INIT;
+  uri.method  = HTTP_GET;
+  uri.handler = _camwebsrv_httpd_handler_cap_seq_init;
+
+  httpd_register_uri_handler(phttpd->handle, &uri);
+
   ESP_LOGI(CAMWEBSRV_TAG, "HTTPD camwebsrv_httpd_start(): started server on port %d", _CAMWEBSRV_HTTPD_SERVER_PORT);
 
   return ESP_OK;
@@ -307,6 +357,12 @@ esp_err_t camwebsrv_httpd_process(camwebsrv_httpd_t httpd, uint16_t *nextevent)
   }
 
   phttpd = (_camwebsrv_httpd_t *) httpd;
+
+  // If the HTTP server is stopped (sequence capture mode), nothing to do.
+  if (phttpd->handle == NULL)
+  {
+    return ESP_OK;
+  }
 
   rv = camwebsrv_sclients_process(phttpd->sclients, phttpd->cam, phttpd->handle, nextevent);
 
@@ -694,6 +750,294 @@ static esp_err_t _camwebsrv_httpd_handler_stream(httpd_req_t *req)
   }
 
   ESP_LOGI(CAMWEBSRV_TAG, "HTTPD _camwebsrv_httpd_handler_stream(%d): served %s", httpd_req_to_sockfd(req), req->uri);
+
+  return ESP_OK;
+}
+
+// ---------------- Sequence capture endpoints ----------------
+
+static bool _qv_int(const char *qs, const char *key, int *out)
+{
+  char tmp[_CAMWEBSRV_HTTPD_PARAM_LEN];
+  memset(tmp, 0x00, sizeof(tmp));
+  if (httpd_query_key_value(qs, key, tmp, sizeof(tmp) - 1) != ESP_OK)
+  {
+    return false;
+  }
+  *out = atoi(tmp);
+  return true;
+}
+
+static bool _qv_str(const char *qs, const char *key, char *out, size_t outlen)
+{
+  if (out == NULL || outlen == 0) return false;
+  memset(out, 0x00, outlen);
+  if (httpd_query_key_value(qs, key, out, outlen - 1) != ESP_OK)
+  {
+    return false;
+  }
+  return true;
+}
+
+static pixformat_t _parse_pixformat(const char *s)
+{
+  if (s == NULL || s[0] == 0x00) return PIXFORMAT_JPEG;
+  // numeric?
+  if (s[0] >= '0' && s[0] <= '9') return (pixformat_t)atoi(s);
+  if (strcasecmp(s, "jpeg") == 0) return PIXFORMAT_JPEG;
+  if (strcasecmp(s, "rgb565") == 0) return PIXFORMAT_RGB565;
+  if (strcasecmp(s, "yuv422") == 0) return PIXFORMAT_YUV422;
+  if (strcasecmp(s, "grayscale") == 0) return PIXFORMAT_GRAYSCALE;
+  if (strcasecmp(s, "rgb888") == 0) return PIXFORMAT_RGB888;
+  if (strcasecmp(s, "raw") == 0) return PIXFORMAT_RAW;
+  return PIXFORMAT_JPEG;
+}
+
+static framesize_t _parse_framesize(const char *s)
+{
+  if (s == NULL || s[0] == 0x00) return FRAMESIZE_UXGA;
+  // numeric?
+  if (s[0] >= '0' && s[0] <= '9') return (framesize_t)atoi(s);
+
+  // Accept common enum names, case-insensitive.
+  #define FS(name) if (strcasecmp(s, #name) == 0) return FRAMESIZE_##name
+  FS(QQVGA);
+  #ifdef FRAMESIZE_QQVGA2    
+  FS(QQVGA2);
+#endif
+  FS(QCIF);
+  FS(HQVGA);
+  FS(240X240);
+  FS(QVGA);
+  FS(CIF);
+  FS(HVGA);
+  FS(VGA);
+  FS(SVGA);
+  FS(XGA);
+  FS(HD);
+  FS(SXGA);
+  FS(UXGA);
+  FS(FHD);
+  FS(P_HD);
+  FS(P_3MP);
+  FS(QXGA);
+  FS(QHD);
+  FS(WQXGA);
+  FS(P_FHD);
+  FS(QSXGA);
+  #undef FS
+  return FRAMESIZE_UXGA;
+}
+
+static void _cfg_try_int(const char *qs, const char *key, bool *has, int *val)
+{
+  int tmp;
+  if (_qv_int(qs, key, &tmp))
+  {
+    *has = true;
+    *val = tmp;
+  }
+}
+
+static esp_err_t _camwebsrv_httpd_handler_seq_cap(httpd_req_t *req)
+{
+  _camwebsrv_httpd_t *phttpd = (_camwebsrv_httpd_t *)httpd_get_global_user_ctx(req->handle);
+
+  // Only master should accept /seq_cap
+  const char *role = "master";
+  camwebsrv_cfgman_get(phttpd->cfgman, CAMWEBSRV_CFGMAN_KEY_ROLE, &role);
+  if (strcasecmp(role, "master") != 0)
+  {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not master");
+    return ESP_FAIL;
+  }
+
+  size_t len = httpd_req_get_url_query_len(req) + 1;
+  if (len <= 1)
+  {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
+    return ESP_FAIL;
+  }
+
+  char *qs = (char *)calloc(1, len + 1);
+  if (!qs)
+  {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
+    return ESP_FAIL;
+  }
+
+  esp_err_t rv = httpd_req_get_url_query_str(req, qs, len);
+  if (rv != ESP_OK)
+  {
+    free(qs);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, NULL);
+    return rv;
+  }
+
+  camwebsrv_seqcap_cfg_t cfg;
+  memset(&cfg, 0x00, sizeof(cfg));
+
+  char pf[_CAMWEBSRV_HTTPD_PARAM_LEN];
+  char sz[_CAMWEBSRV_HTTPD_PARAM_LEN];
+  char name[sizeof(cfg.cap_seq_name)];
+  memset(pf, 0x00, sizeof(pf));
+  memset(sz, 0x00, sizeof(sz));
+  memset(name, 0x00, sizeof(name));
+
+  // required args
+  _qv_str(qs, "pixformat", pf, sizeof(pf));
+  // size can be provided as 'size' (requested) or 'framesize'
+  if (!_qv_str(qs, "size", sz, sizeof(sz)))
+  {
+    _qv_str(qs, "framesize", sz, sizeof(sz));
+  }
+  if (!_qv_str(qs, "cap_seq_name", name, sizeof(name)))
+  {
+    free(qs);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing cap_seq_name");
+    return ESP_FAIL;
+  }
+  int cap_amount = 0;
+  if (!_qv_int(qs, "cap_amount", &cap_amount) || cap_amount <= 0)
+  {
+    free(qs);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing cap_amount");
+    return ESP_FAIL;
+  }
+
+  cfg.pixformat = _parse_pixformat(pf);
+  cfg.framesize = _parse_framesize(sz);
+  strncpy(cfg.cap_seq_name, name, sizeof(cfg.cap_seq_name) - 1);
+  cfg.cap_amount = cap_amount;
+
+  // optional timing
+  cfg.slave_prepare_delay_ms = 200;
+  cfg.inter_frame_delay_ms = 0;
+  _qv_int(qs, "slave_prepare_delay_ms", &cfg.slave_prepare_delay_ms);
+  _qv_int(qs, "inter_frame_delay_ms", &cfg.inter_frame_delay_ms);
+
+  // optional camera settings
+  _cfg_try_int(qs, "quality", &cfg.has_quality, &cfg.quality);
+  _cfg_try_int(qs, "brightness", &cfg.has_brightness, &cfg.brightness);
+  _cfg_try_int(qs, "contrast", &cfg.has_contrast, &cfg.contrast);
+  _cfg_try_int(qs, "saturation", &cfg.has_saturation, &cfg.saturation);
+  _cfg_try_int(qs, "sharpness", &cfg.has_sharpness, &cfg.sharpness);
+  _cfg_try_int(qs, "special_effect", &cfg.has_special_effect, &cfg.special_effect);
+  _cfg_try_int(qs, "wb_mode", &cfg.has_wb_mode, &cfg.wb_mode);
+  _cfg_try_int(qs, "aec", &cfg.has_aec, &cfg.aec);
+  _cfg_try_int(qs, "aec2", &cfg.has_aec2, &cfg.aec2);
+  _cfg_try_int(qs, "aec_value", &cfg.has_aec_value, &cfg.aec_value);
+  _cfg_try_int(qs, "ae_level", &cfg.has_ae_level, &cfg.ae_level);
+  _cfg_try_int(qs, "agc", &cfg.has_agc, &cfg.agc);
+  _cfg_try_int(qs, "agc_gain", &cfg.has_agc_gain, &cfg.agc_gain);
+  _cfg_try_int(qs, "gainceiling", &cfg.has_gainceiling, &cfg.gainceiling);
+  _cfg_try_int(qs, "awb", &cfg.has_awb, &cfg.awb);
+  _cfg_try_int(qs, "awb_gain", &cfg.has_awb_gain, &cfg.awb_gain);
+  _cfg_try_int(qs, "dcw", &cfg.has_dcw, &cfg.dcw);
+  _cfg_try_int(qs, "bpc", &cfg.has_bpc, &cfg.bpc);
+  _cfg_try_int(qs, "wpc", &cfg.has_wpc, &cfg.wpc);
+  _cfg_try_int(qs, "hmirror", &cfg.has_hmirror, &cfg.hmirror);
+  _cfg_try_int(qs, "vflip", &cfg.has_vflip, &cfg.vflip);
+  _cfg_try_int(qs, "lenc", &cfg.has_lenc, &cfg.lenc);
+  _cfg_try_int(qs, "raw_gma", &cfg.has_raw_gma, &cfg.raw_gma);
+  _cfg_try_int(qs, "colorbar", &cfg.has_colorbar, &cfg.colorbar);
+
+  // Determine slave host
+  char slave_host[96] = {0};
+  if (!_qv_str(qs, "slave_host", slave_host, sizeof(slave_host)))
+  {
+    const char *pair_id = "0";
+    camwebsrv_cfgman_get(phttpd->cfgman, CAMWEBSRV_CFGMAN_KEY_PAIR_ID, &pair_id);
+    snprintf(slave_host, sizeof(slave_host), "cam-slave-%s.local", pair_id);
+  }
+
+  free(qs);
+
+  // Respond immediately so the HTTP client doesn't time out
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_sendstr(req, "{\"ok\":true,\"started\":true}");
+
+  // Start capture task (it will stop Wi-Fi/httpd and restore them when done)
+  rv = camwebsrv_seqcap_start_master(phttpd->cam, (camwebsrv_httpd_t)phttpd, &cfg, slave_host);
+  if (rv != ESP_OK)
+  {
+    ESP_LOGE(CAMWEBSRV_TAG, "HTTPD /seq_cap: camwebsrv_seqcap_start_master failed: %s", esp_err_to_name(rv));
+  }
+
+  return ESP_OK;
+}
+
+static esp_err_t _camwebsrv_httpd_handler_cap_seq_init(httpd_req_t *req)
+{
+  _camwebsrv_httpd_t *phttpd = (_camwebsrv_httpd_t *)httpd_get_global_user_ctx(req->handle);
+
+  // Only slave should accept /cap_seq_init
+  const char *role = "slave";
+  camwebsrv_cfgman_get(phttpd->cfgman, CAMWEBSRV_CFGMAN_KEY_ROLE, &role);
+  if (strcasecmp(role, "slave") != 0)
+  {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not slave");
+    return ESP_FAIL;
+  }
+
+  size_t len = httpd_req_get_url_query_len(req) + 1;
+  if (len <= 1)
+  {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
+    return ESP_FAIL;
+  }
+
+  char *qs = (char *)calloc(1, len + 1);
+  if (!qs)
+  {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
+    return ESP_FAIL;
+  }
+  esp_err_t rv = httpd_req_get_url_query_str(req, qs, len);
+  if (rv != ESP_OK)
+  {
+    free(qs);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, NULL);
+    return rv;
+  }
+
+  camwebsrv_seqcap_cfg_t cfg;
+  memset(&cfg, 0x00, sizeof(cfg));
+
+  int pf_i = (int)PIXFORMAT_JPEG;
+  int fs_i = (int)FRAMESIZE_UXGA;
+  _qv_int(qs, "pixformat", &pf_i);
+  _qv_int(qs, "framesize", &fs_i);
+  cfg.pixformat = (pixformat_t)pf_i;
+  cfg.framesize = (framesize_t)fs_i;
+
+  if (!_qv_str(qs, "cap_seq_name", cfg.cap_seq_name, sizeof(cfg.cap_seq_name)))
+  {
+    free(qs);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing cap_seq_name");
+    return ESP_FAIL;
+  }
+
+  if (!_qv_int(qs, "cap_amount", &cfg.cap_amount) || cfg.cap_amount <= 0)
+  {
+    free(qs);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing cap_amount");
+    return ESP_FAIL;
+  }
+
+  free(qs);
+
+  // Ack immediately, then start slave capture task
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_sendstr(req, "{\"ok\":true,\"prepared\":true}");
+
+  rv = camwebsrv_seqcap_start_slave(phttpd->cam, (camwebsrv_httpd_t)phttpd, &cfg);
+  if (rv != ESP_OK)
+  {
+    ESP_LOGE(CAMWEBSRV_TAG, "HTTPD /cap_seq_init: camwebsrv_seqcap_start_slave failed: %s", esp_err_to_name(rv));
+  }
 
   return ESP_OK;
 }
