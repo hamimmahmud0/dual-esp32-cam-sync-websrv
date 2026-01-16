@@ -247,7 +247,7 @@ size_t camwebsrv_vbytes_length(camwebsrv_vbytes_t vb)
 static esp_err_t _camwebsrv_vbytes_set(_camwebsrv_vbytes_t *nvb, const uint8_t *bytes, size_t len)
 {
   size_t size;
-  uint8_t *cpy;
+  uint8_t *cpy = NULL;
   uint8_t *tmp;
 
   // copy source in case it overlaps the internal byte array
