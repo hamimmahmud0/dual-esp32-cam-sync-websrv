@@ -286,7 +286,7 @@ esp_err_t camwebsrv_camera_frame_grab(camwebsrv_camera_t cam, uint8_t **fbuf, si
         vTaskDelay((1000 / pcam->fps) / portTICK_PERIOD_MS);
       }
 
-      pcam->fb = esp_camera_fb_get();
+      pcam->fb = esp_camera_fb_get(); 
 
       if (pcam->fb == NULL)
       {

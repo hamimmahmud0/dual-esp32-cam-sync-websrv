@@ -18,5 +18,6 @@ esp_err_t camwebsrv_sdcard_mkdirs(const char *path);
 
 // Write a binary file (overwrites if exists).
 esp_err_t camwebsrv_sdcard_write_file(const char *path, const void *data, size_t len);
+esp_err_t mkdir_p(const char *path);
 
 #endif

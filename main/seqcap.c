@@ -52,9 +52,7 @@ static void blink_pattern(void)
 
 static const char *framesize_to_str(framesize_t fs)
 {
-  // esp32-camera uses these enum names; this is only for filenames.
-  switch (fs)
-  {
+  switch (fs) {
     case FRAMESIZE_QQVGA: return "qqvga";
 #ifdef FRAMESIZE_QQVGA2
     case FRAMESIZE_QQVGA2: return "qqvga2";
@@ -68,17 +66,35 @@ static const char *framesize_to_str(framesize_t fs)
     case FRAMESIZE_VGA: return "vga";
     case FRAMESIZE_SVGA: return "svga";
     case FRAMESIZE_XGA: return "xga";
-    case FRAMESIZE_HD: return "hd";
     case FRAMESIZE_SXGA: return "sxga";
     case FRAMESIZE_UXGA: return "uxga";
+#ifdef FRAMESIZE_HD
+    case FRAMESIZE_HD: return "hd";
+#endif
+#ifdef FRAMESIZE_FHD
     case FRAMESIZE_FHD: return "fhd";
+#endif
+#ifdef FRAMESIZE_P_HD
     case FRAMESIZE_P_HD: return "p_hd";
+#endif
+#ifdef FRAMESIZE_P_3MP
     case FRAMESIZE_P_3MP: return "p_3mp";
+#endif
+#ifdef FRAMESIZE_QXGA
     case FRAMESIZE_QXGA: return "qxga";
+#endif
+#ifdef FRAMESIZE_QHD
     case FRAMESIZE_QHD: return "qhd";
+#endif
+#ifdef FRAMESIZE_WQXGA
     case FRAMESIZE_WQXGA: return "wqxga";
+#endif
+#ifdef FRAMESIZE_P_FHD
     case FRAMESIZE_P_FHD: return "p_fhd";
+#endif
+#ifdef FRAMESIZE_QSXGA
     case FRAMESIZE_QSXGA: return "qsxga";
+#endif
     default: return "fs";
   }
 }
@@ -127,13 +143,24 @@ static esp_err_t ensure_capture_dir(const char *cap_seq_name)
   return camwebsrv_sdcard_mkdirs(dir);
 }
 
+
+char write_frame_to_sd_path[512];
+
 static esp_err_t write_frame_to_sd(const camwebsrv_seqcap_cfg_t *cfg, const uint8_t *buf, size_t len)
 {
   int64_t ts_us = esp_timer_get_time();
   const char *fs = framesize_to_str(cfg->framesize);
-  char path[256];
-  snprintf(path, sizeof(path), "%s/captures/%s/%lld-%s.raw", CAMWEBSRV_SDCARD_MOUNT_PATH, cfg->cap_seq_name, (long long)ts_us, fs);
-  return camwebsrv_sdcard_write_file(path, buf, len);
+  // Directories are created once during seqcap init (ensure_capture_dir()).
+  // Do NOT mkdir inside the capture loop: it adds jitter and, if called with the
+  // full filename, can accidentally create a directory where we later want a file.
+  snprintf(write_frame_to_sd_path, sizeof(write_frame_to_sd_path),
+           "%s/captures/%s/%lld-%s.raw",
+           CAMWEBSRV_SDCARD_MOUNT_PATH,
+           cfg->cap_seq_name,
+           (long long)(ts_us / 1000),
+           fs);
+
+  return camwebsrv_sdcard_write_file(write_frame_to_sd_path, buf, len);
 }
 
 static esp_err_t slave_http_prepare(const camwebsrv_seqcap_cfg_t *cfg, const char *slave_host)
@@ -197,73 +224,91 @@ static void IRAM_ATTR slave_isr(void *arg)
 
 static void seqcap_task_master(void *arg)
 {
-  seqcap_task_arg_t *a = (seqcap_task_arg_t *)arg;
+  seqcap_task_arg_t *a = (seqcap_task_arg_t *) malloc(sizeof(seqcap_task_arg_t));
+  if (a == NULL) {
+    ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: malloc failed");
+    vTaskDelete(NULL);
+  }
+  memset(a, 0x00, sizeof(seqcap_task_arg_t));
+
+  // copy args
+  memcpy(a, arg, sizeof(seqcap_task_arg_t));
+  //free(arg);
+
+  // print seqcap cfg
+  ESP_LOGI(CAMWEBSRV_TAG, "SEQCAP master starting: pixformat=%d framesize=%d cap_seq_name=%s cap_amount=%d",
+           (int)a->cfg.pixformat,
+           (int)a->cfg.framesize,
+           a->cfg.cap_seq_name,
+           a->cfg.cap_amount);
+
   s_active = true;
 
-  // Stop HTTP server and Wi-Fi to reduce jitter during capture.
-  camwebsrv_httpd_stop(a->httpd);
-  esp_wifi_stop();
-  vTaskDelay(pdMS_TO_TICKS(50));
-
-  bool sd4 = false;
-  if (camwebsrv_sdcard_mount(&sd4) != ESP_OK)
-  {
-    ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: SD mount failed");
-    goto out;
-  }
-
-  if (ensure_capture_dir(a->cfg.cap_seq_name) != ESP_OK)
-  {
-    ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: failed to create capture dir");
-    goto out_sd;
-  }
-
-  // Tell slave to prepare
-  if (a->slave_host[0] != 0x00)
-  {
-    if (slave_http_prepare(&a->cfg, a->slave_host) != ESP_OK)
-    {
+  // 1) Tell slave to prepare while Wi-Fi + HTTPD are still running
+  if (a->slave_host[0] != 0x00) {
+    if (slave_http_prepare(&a->cfg, a->slave_host) != ESP_OK) {
       ESP_LOGW(CAMWEBSRV_TAG, "SEQCAP master: slave prepare failed (continuing anyway)");
     }
   }
 
-  if (a->cfg.slave_prepare_delay_ms > 0)
-  {
+  if (a->cfg.slave_prepare_delay_ms > 0) {
     vTaskDelay(pdMS_TO_TICKS(a->cfg.slave_prepare_delay_ms));
   }
 
-  // Stop web server and Wi-Fi to reduce jitter during capture
-  if (a->httpd)
-  {
+  // 2) Stop HTTP server and Wi-Fi ONCE to reduce jitter during capture
+  if (a->httpd) {
     camwebsrv_httpd_stop(a->httpd);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
   esp_wifi_stop();
   vTaskDelay(pdMS_TO_TICKS(50));
 
-  // Apply camera settings (while Wi-Fi still running, to keep things simple)
-  if (apply_cfg(a->cam, &a->cfg) != ESP_OK)
-  {
+  // 3) Mount SD + ensure capture dir
+  bool sd4 = false;
+  if (camwebsrv_sdcard_mount(&sd4) != ESP_OK) {
+    ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: SD mount failed");
+    goto out;
+  }
+
+  if (ensure_capture_dir(a->cfg.cap_seq_name) != ESP_OK) {
+    ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: failed to create capture dir");
+    goto out_sd;
+  }
+
+  // 4) Apply camera settings
+  if (apply_cfg(a->cam, &a->cfg) != ESP_OK) {
     ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: failed to apply camera cfg");
     goto out_sd;
   }
 
-  // Configure sync pin
+  // drop 5 frames to stabilize
+  for (int i = 0; i < 5; i++) {
+    uint8_t *fbuf = NULL;
+    size_t flen = 0;
+    esp_err_t rv = camwebsrv_camera_frame_grab(a->cam, &fbuf, &flen, NULL);
+    if (rv == ESP_OK) {
+      camwebsrv_camera_frame_dispose(a->cam);
+    }
+    ets_delay_us(30000);
+  }
+
+
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  // 5) Configure sync pin
   gpio_set_direction(CAMWEBSRV_PIN_SYNC, GPIO_MODE_OUTPUT);
   gpio_set_level(CAMWEBSRV_PIN_SYNC, 0);
-
-  for (int i = 0; i < a->cfg.cap_amount; i++)
-  {
+  
+  // 6) Capture loop (KEEP your existing loop here)
+  for (int i = 0; i < a->cfg.cap_amount; i++) {
     uint8_t *fbuf = NULL;
     size_t flen = 0;
 
-    // Pulse high, start capture immediately.
     gpio_set_level(CAMWEBSRV_PIN_SYNC, 1);
     esp_err_t rv = camwebsrv_camera_frame_grab(a->cam, &fbuf, &flen, NULL);
     ets_delay_us(5000);
     gpio_set_level(CAMWEBSRV_PIN_SYNC, 0);
 
-    if (rv != ESP_OK)
-    {
+    if (rv != ESP_OK) {
       ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: frame_grab failed: %s", esp_err_to_name(rv));
       break;
     }
@@ -271,53 +316,31 @@ static void seqcap_task_master(void *arg)
     rv = write_frame_to_sd(&a->cfg, fbuf, flen);
     camwebsrv_camera_frame_dispose(a->cam);
 
-    if (rv != ESP_OK)
-    {
+    if (rv != ESP_OK) {
       ESP_LOGE(CAMWEBSRV_TAG, "SEQCAP master: write failed");
       break;
     }
 
-    if (a->cfg.inter_frame_delay_ms > 0)
-    {
+    if (a->cfg.inter_frame_delay_ms > 0) {
       vTaskDelay(pdMS_TO_TICKS(a->cfg.inter_frame_delay_ms));
     }
   }
 
-  // Optional blink (unmount SD first if using 4-bit, because GPIO4 is SD D1)
+  // 7) Optional blink: unmount SD before blinking (GPIO4 conflict)
   camwebsrv_sdcard_unmount();
   blink_pattern();
   camwebsrv_sdcard_mount(NULL);
 
-  // Restore Wi-Fi and web server
+  // free a
+
+  // 8) Restore Wi-Fi + HTTPD ONCE
   esp_wifi_start();
   esp_wifi_connect();
-  if (a->httpd)
-  {
+  if (a->httpd) {
     camwebsrv_httpd_start(a->httpd);
   }
 
-  // Restore Wi-Fi and web server
-  esp_wifi_start();
-  esp_wifi_connect();
-  if (a->httpd)
-  {
-    camwebsrv_httpd_start(a->httpd);
-  }
-
-  // Bring Wi-Fi + web server back
-  esp_wifi_start();
-  esp_wifi_connect();
-  if (a->httpd)
-  {
-    camwebsrv_httpd_start(a->httpd);
-  }
-
-  // Restart Wi-Fi + HTTP server
-  esp_wifi_start();
-  esp_wifi_connect();
-  vTaskDelay(pdMS_TO_TICKS(200));
-  camwebsrv_httpd_start(a->httpd);
-
+  free(a);
   goto out;
 
 out_sd:
@@ -415,12 +438,6 @@ static void seqcap_task_slave(void *arg)
     camwebsrv_httpd_start(a->httpd);
   }
 
-  // Restart Wi-Fi + HTTP server
-  esp_wifi_start();
-  esp_wifi_connect();
-  vTaskDelay(pdMS_TO_TICKS(200));
-  camwebsrv_httpd_start(a->httpd);
-
   goto out;
 
 out_sd:
@@ -450,7 +467,7 @@ esp_err_t camwebsrv_seqcap_start_master(camwebsrv_camera_t cam, camwebsrv_httpd_
   a->is_master = true;
   if (slave_host) strncpy(a->slave_host, slave_host, sizeof(a->slave_host) - 1);
 
-  if (xTaskCreate(seqcap_task_master, "seqcap_master", 8192, a, 5, NULL) != pdPASS)
+  if (xTaskCreate(seqcap_task_master, "seqcap_master", 1024*8, a, 5, NULL) != pdPASS)
   {
     free(a);
     return ESP_FAIL;

@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/unistd.h>
 #include <fcntl.h>
+#include <dirent.h>
 
 #include <esp_log.h>
 #include <esp_vfs_fat.h>
@@ -20,6 +21,46 @@
 
 static sdmmc_card_t *s_card = NULL;
 static bool s_mounted = false;
+
+static void sdcard_warmup_fs(void)
+{
+  // Touch the VFS/FatFs once right after mount so any internal sync objects are
+  // created outside time-critical capture loops.
+  DIR *d = opendir(CAMWEBSRV_SDCARD_MOUNT_PATH);
+  if (d) {
+    closedir(d);
+  }
+}
+
+
+
+esp_err_t mkdir_p(const char *path)
+{
+  char tmp[512];
+  size_t len = strnlen(path, sizeof(tmp) - 1);
+  if (len == 0 || len >= sizeof(tmp) - 1) return ESP_ERR_INVALID_ARG;
+
+  memcpy(tmp, path, len);
+  tmp[len] = 0;
+
+  // Walk and mkdir each level
+  for (char *p = tmp + 1; *p; p++) {
+    if (*p == '/') {
+      *p = 0;
+      if (mkdir(tmp, 0775) != 0 && errno != EEXIST) {
+        return ESP_FAIL;
+      }
+      *p = '/';
+    }
+  }
+
+  if (mkdir(tmp, 0775) != 0 && errno != EEXIST) {
+    return ESP_FAIL;
+  }
+
+  return ESP_OK;
+}
+
 
 static void sdcard_configure_pullups(void)
 {
@@ -72,6 +113,9 @@ esp_err_t camwebsrv_sdcard_mount(bool *used_4bit)
     s_mounted = true;
     if (used_4bit) *used_4bit = true;
     ESP_LOGI(CAMWEBSRV_TAG, "SDCARD mounted (4-bit) at %s", CAMWEBSRV_SDCARD_MOUNT_PATH);
+    // Create a stable base directory and warm up FS internals.
+    (void)camwebsrv_sdcard_mkdirs(CAMWEBSRV_SDCARD_MOUNT_PATH "/captures");
+    sdcard_warmup_fs();
     return ESP_OK;
   }
 
@@ -84,6 +128,8 @@ esp_err_t camwebsrv_sdcard_mount(bool *used_4bit)
     s_mounted = true;
     if (used_4bit) *used_4bit = false;
     ESP_LOGI(CAMWEBSRV_TAG, "SDCARD mounted (1-bit) at %s", CAMWEBSRV_SDCARD_MOUNT_PATH);
+    (void)camwebsrv_sdcard_mkdirs(CAMWEBSRV_SDCARD_MOUNT_PATH "/captures");
+    sdcard_warmup_fs();
     return ESP_OK;
   }
 
@@ -151,6 +197,8 @@ esp_err_t camwebsrv_sdcard_write_file(const char *path, const void *data, size_t
     return ESP_ERR_INVALID_ARG;
   }
 
+  //ESP_LOGI(CAMWEBSRV_TAG, "SDCARD writing file %s (%u bytes)", path, (unsigned)len);
+  
   int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0664);
   if (fd < 0)
   {
