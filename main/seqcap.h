@@ -1,5 +1,6 @@
 // 2026-01-16 seqcap.h
 // SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
 
 #ifndef _CAMWEBSRV_SEQCAP_H
 #define _CAMWEBSRV_SEQCAP_H
@@ -12,6 +13,8 @@
 
 // Forward declaration (httpd.h also defines this)
 typedef void *camwebsrv_httpd_t;
+
+
 
 typedef struct
 {
@@ -52,14 +55,29 @@ typedef struct
   int inter_frame_delay_ms;   // master waits between frames
 } camwebsrv_seqcap_cfg_t;
 
+
+
+typedef struct
+{
+  camwebsrv_camera_t cam;
+  camwebsrv_httpd_t httpd;
+  camwebsrv_seqcap_cfg_t *cfg;
+  char slave_host[80];
+  bool is_master;
+} seqcap_task_arg_t;
+
+
+extern camwebsrv_seqcap_cfg_t seqcap_cfg;
+extern seqcap_task_arg_t seqcap_task_arg;
+
 // Global "capture mode" gate used by main loop to pause ping/http servicing.
 bool camwebsrv_seqcap_is_active(void);
 
 // Master sequence: configure slave over HTTP, stop Wi-Fi/httpd, pulse GPIO, capture/write.
-// 'slave_host' can be mDNS hostname (e.g., "cam-slave-0.local") or IP.
-esp_err_t camwebsrv_seqcap_start_master(camwebsrv_camera_t cam, camwebsrv_httpd_t httpd, const camwebsrv_seqcap_cfg_t *cfg, const char *slave_host);
+// 'slave_host' can be mDNS hostname (e.g., "cam-slave-<id>.local") or IP.
+esp_err_t camwebsrv_seqcap_start_master(camwebsrv_camera_t cam, camwebsrv_httpd_t httpd, camwebsrv_seqcap_cfg_t *cfg, const char *slave_host);
 
 // Slave prepares config; once started it stops Wi-Fi/httpd and waits for GPIO interrupts.
-esp_err_t camwebsrv_seqcap_start_slave(camwebsrv_camera_t cam, camwebsrv_httpd_t httpd, const camwebsrv_seqcap_cfg_t *cfg);
+esp_err_t camwebsrv_seqcap_start_slave(camwebsrv_camera_t cam, camwebsrv_httpd_t httpd, camwebsrv_seqcap_cfg_t *cfg);
 
 #endif

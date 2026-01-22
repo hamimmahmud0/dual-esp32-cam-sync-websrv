@@ -56,7 +56,7 @@
 #define CAMWEBSRV_PIN_HREF 23
 #define CAMWEBSRV_PIN_PCLK 22
 
-#define CAMWEBSRV_PIN_FLASH 4
+#define CAMWEBSRV_PIN_FLASH 33
 
 // Sequence capture sync signal pin (master output, slave interrupt input)
 #define CAMWEBSRV_PIN_SYNC 16
@@ -73,7 +73,7 @@
 
 // SD card mount point for captures
 #define CAMWEBSRV_SDCARD_MOUNT_PATH "/sdcard"
-
+#define SD_WRITE_BUFFER_SIZE_KB 16
 
 
 #endif

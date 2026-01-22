@@ -308,7 +308,7 @@ esp_err_t camwebsrv_camera_frame_grab(camwebsrv_camera_t cam, uint8_t **fbuf, si
   {
     *tstamp = pcam->tstamp;
   }
-
+  xSemaphoreGive(pcam->mutex2);
   return ESP_OK;
 }
 

@@ -1,3 +1,7 @@
+//#define RUN_SD_BENCHMARK
+
+
+
 // 2023-01-03 main.c
 // Copyright (C) 2023 Vino Fernando Crescini  <vfcrescini@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -9,6 +13,8 @@
 #include "storage.h"
 #include "wifi.h"
 #include "seqcap.h"
+#include "sdcard_utils.h"
+#include "sd_bench.h"
 
 #include <esp_log.h>
 #include <esp_err.h>
@@ -191,6 +197,17 @@ void app_main()
     ESP_LOGE(CAMWEBSRV_TAG, "MAIN app_main(): xSemaphoreCreateBinary() failed: [%d]: %s", rv, esp_err_to_name(rv));
     goto camwebsrv_main_error;
   }
+
+  // mount sdcard
+
+  
+
+    ESP_ERROR_CHECK(sdcard_mount(&sd_cfg, &card));
+    ESP_LOGI(CAMWEBSRV_TAG, "SDCARD mounted at /sdcard");
+
+    #ifdef RUN_SD_BENCHMARK
+    run_sdmmc_buffer_benchmark();
+    #endif
 
   // initialise web server
 

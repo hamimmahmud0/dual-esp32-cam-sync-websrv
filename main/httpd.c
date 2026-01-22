@@ -839,6 +839,9 @@ static void _cfg_try_int(const char *qs, const char *key, bool *has, int *val)
   }
 }
 
+
+
+
 static esp_err_t _camwebsrv_httpd_handler_seq_cap(httpd_req_t *req)
 {
   _camwebsrv_httpd_t *phttpd = (_camwebsrv_httpd_t *)httpd_get_global_user_ctx(req->handle);
@@ -874,12 +877,11 @@ static esp_err_t _camwebsrv_httpd_handler_seq_cap(httpd_req_t *req)
     return rv;
   }
 
-  camwebsrv_seqcap_cfg_t cfg;
-  memset(&cfg, 0x00, sizeof(cfg));
+  memset(&seqcap_cfg, 0x00, sizeof(seqcap_cfg));
 
   char pf[_CAMWEBSRV_HTTPD_PARAM_LEN];
   char sz[_CAMWEBSRV_HTTPD_PARAM_LEN];
-  char name[sizeof(cfg.cap_seq_name)];
+  char name[sizeof(seqcap_cfg.cap_seq_name)];
   memset(pf, 0x00, sizeof(pf));
   memset(sz, 0x00, sizeof(sz));
   memset(name, 0x00, sizeof(name));
@@ -905,42 +907,42 @@ static esp_err_t _camwebsrv_httpd_handler_seq_cap(httpd_req_t *req)
     return ESP_FAIL;
   }
 
-  cfg.pixformat = _parse_pixformat(pf);
-  cfg.framesize = _parse_framesize(sz);
-  strncpy(cfg.cap_seq_name, name, sizeof(cfg.cap_seq_name) - 1);
-  cfg.cap_amount = cap_amount;
+  seqcap_cfg.pixformat = _parse_pixformat(pf);
+  seqcap_cfg.framesize = _parse_framesize(sz);
+  strncpy(seqcap_cfg.cap_seq_name, name, sizeof(seqcap_cfg.cap_seq_name) - 1);
+  seqcap_cfg.cap_amount = cap_amount;
 
   // optional timing
-  cfg.slave_prepare_delay_ms = 200;
-  cfg.inter_frame_delay_ms = 0;
-  _qv_int(qs, "slave_prepare_delay_ms", &cfg.slave_prepare_delay_ms);
-  _qv_int(qs, "inter_frame_delay_ms", &cfg.inter_frame_delay_ms);
+  seqcap_cfg.slave_prepare_delay_ms = 200;
+  seqcap_cfg.inter_frame_delay_ms = 0;
+  _qv_int(qs, "slave_prepare_delay_ms", &seqcap_cfg.slave_prepare_delay_ms);
+  _qv_int(qs, "inter_frame_delay_ms", &seqcap_cfg.inter_frame_delay_ms);
 
   // optional camera settings
-  _cfg_try_int(qs, "quality", &cfg.has_quality, &cfg.quality);
-  _cfg_try_int(qs, "brightness", &cfg.has_brightness, &cfg.brightness);
-  _cfg_try_int(qs, "contrast", &cfg.has_contrast, &cfg.contrast);
-  _cfg_try_int(qs, "saturation", &cfg.has_saturation, &cfg.saturation);
-  _cfg_try_int(qs, "sharpness", &cfg.has_sharpness, &cfg.sharpness);
-  _cfg_try_int(qs, "special_effect", &cfg.has_special_effect, &cfg.special_effect);
-  _cfg_try_int(qs, "wb_mode", &cfg.has_wb_mode, &cfg.wb_mode);
-  _cfg_try_int(qs, "aec", &cfg.has_aec, &cfg.aec);
-  _cfg_try_int(qs, "aec2", &cfg.has_aec2, &cfg.aec2);
-  _cfg_try_int(qs, "aec_value", &cfg.has_aec_value, &cfg.aec_value);
-  _cfg_try_int(qs, "ae_level", &cfg.has_ae_level, &cfg.ae_level);
-  _cfg_try_int(qs, "agc", &cfg.has_agc, &cfg.agc);
-  _cfg_try_int(qs, "agc_gain", &cfg.has_agc_gain, &cfg.agc_gain);
-  _cfg_try_int(qs, "gainceiling", &cfg.has_gainceiling, &cfg.gainceiling);
-  _cfg_try_int(qs, "awb", &cfg.has_awb, &cfg.awb);
-  _cfg_try_int(qs, "awb_gain", &cfg.has_awb_gain, &cfg.awb_gain);
-  _cfg_try_int(qs, "dcw", &cfg.has_dcw, &cfg.dcw);
-  _cfg_try_int(qs, "bpc", &cfg.has_bpc, &cfg.bpc);
-  _cfg_try_int(qs, "wpc", &cfg.has_wpc, &cfg.wpc);
-  _cfg_try_int(qs, "hmirror", &cfg.has_hmirror, &cfg.hmirror);
-  _cfg_try_int(qs, "vflip", &cfg.has_vflip, &cfg.vflip);
-  _cfg_try_int(qs, "lenc", &cfg.has_lenc, &cfg.lenc);
-  _cfg_try_int(qs, "raw_gma", &cfg.has_raw_gma, &cfg.raw_gma);
-  _cfg_try_int(qs, "colorbar", &cfg.has_colorbar, &cfg.colorbar);
+  _cfg_try_int(qs, "quality", &seqcap_cfg.has_quality, &seqcap_cfg.quality);
+  _cfg_try_int(qs, "brightness", &seqcap_cfg.has_brightness, &seqcap_cfg.brightness);
+  _cfg_try_int(qs, "contrast", &seqcap_cfg.has_contrast, &seqcap_cfg.contrast);
+  _cfg_try_int(qs, "saturation", &seqcap_cfg.has_saturation, &seqcap_cfg.saturation);
+  _cfg_try_int(qs, "sharpness", &seqcap_cfg.has_sharpness, &seqcap_cfg.sharpness);
+  _cfg_try_int(qs, "special_effect", &seqcap_cfg.has_special_effect, &seqcap_cfg.special_effect);
+  _cfg_try_int(qs, "wb_mode", &seqcap_cfg.has_wb_mode, &seqcap_cfg.wb_mode);
+  _cfg_try_int(qs, "aec", &seqcap_cfg.has_aec, &seqcap_cfg.aec);
+  _cfg_try_int(qs, "aec2", &seqcap_cfg.has_aec2, &seqcap_cfg.aec2);
+  _cfg_try_int(qs, "aec_value", &seqcap_cfg.has_aec_value, &seqcap_cfg.aec_value);
+  _cfg_try_int(qs, "ae_level", &seqcap_cfg.has_ae_level, &seqcap_cfg.ae_level);
+  _cfg_try_int(qs, "agc", &seqcap_cfg.has_agc, &seqcap_cfg.agc);
+  _cfg_try_int(qs, "agc_gain", &seqcap_cfg.has_agc_gain, &seqcap_cfg.agc_gain);
+  _cfg_try_int(qs, "gainceiling", &seqcap_cfg.has_gainceiling, &seqcap_cfg.gainceiling);
+  _cfg_try_int(qs, "awb", &seqcap_cfg.has_awb, &seqcap_cfg.awb);
+  _cfg_try_int(qs, "awb_gain", &seqcap_cfg.has_awb_gain, &seqcap_cfg.awb_gain);
+  _cfg_try_int(qs, "dcw", &seqcap_cfg.has_dcw, &seqcap_cfg.dcw);
+  _cfg_try_int(qs, "bpc", &seqcap_cfg.has_bpc, &seqcap_cfg.bpc);
+  _cfg_try_int(qs, "wpc", &seqcap_cfg.has_wpc, &seqcap_cfg.wpc);
+  _cfg_try_int(qs, "hmirror", &seqcap_cfg.has_hmirror, &seqcap_cfg.hmirror);
+  _cfg_try_int(qs, "vflip", &seqcap_cfg.has_vflip, &seqcap_cfg.vflip);
+  _cfg_try_int(qs, "lenc", &seqcap_cfg.has_lenc, &seqcap_cfg.lenc);
+  _cfg_try_int(qs, "raw_gma", &seqcap_cfg.has_raw_gma, &seqcap_cfg.raw_gma);
+  _cfg_try_int(qs, "colorbar", &seqcap_cfg.has_colorbar, &seqcap_cfg.colorbar);
 
   // Determine slave host
   char slave_host[96] = {0};
@@ -959,7 +961,21 @@ static esp_err_t _camwebsrv_httpd_handler_seq_cap(httpd_req_t *req)
   httpd_resp_sendstr(req, "{\"ok\":true,\"started\":true}");
 
   // Start capture task (it will stop Wi-Fi/httpd and restore them when done)
-  rv = camwebsrv_seqcap_start_master(phttpd->cam, (camwebsrv_httpd_t)phttpd, &cfg, slave_host);
+
+  // print seqcap_cfg for debugging
+  ESP_LOGI(CAMWEBSRV_TAG, "HTTPD /seq_cap: Starting sequence capture with config:");
+  ESP_LOGI(CAMWEBSRV_TAG, "  pixformat: %d", seqcap_cfg.pixformat);
+  ESP_LOGI(CAMWEBSRV_TAG, "  framesize: %d", seqcap_cfg.framesize);
+  ESP_LOGI(CAMWEBSRV_TAG, "  cap_seq_name: %s", seqcap_cfg.cap_seq_name);
+  ESP_LOGI(CAMWEBSRV_TAG, "  cap_amount: %d", seqcap_cfg.cap_amount);
+  ESP_LOGI(CAMWEBSRV_TAG, "  slave_prepare_delay_ms: %d", seqcap_cfg.slave_prepare_delay_ms);
+  ESP_LOGI(CAMWEBSRV_TAG, "  inter_frame_delay_ms: %d", seqcap_cfg.inter_frame_delay_ms);
+  if (seqcap_cfg.has_quality) ESP_LOGI(CAMWEBSRV_TAG, "  quality: %d", seqcap_cfg.quality);
+  if (seqcap_cfg.has_brightness) ESP_LOGI(CAMWEBSRV_TAG, "  brightness: %d", seqcap_cfg.brightness);
+  if (seqcap_cfg.has_contrast) ESP_LOGI(CAMWEBSRV_TAG, "  contrast: %d", seqcap_cfg.contrast);
+  if (seqcap_cfg.has_saturation) ESP_LOGI(CAMWEBSRV_TAG, "  saturation: %d", seqcap_cfg.saturation);
+
+  rv = camwebsrv_seqcap_start_master(phttpd->cam, (camwebsrv_httpd_t)phttpd, &seqcap_cfg, slave_host);
   if (rv != ESP_OK)
   {
     ESP_LOGE(CAMWEBSRV_TAG, "HTTPD /seq_cap: camwebsrv_seqcap_start_master failed: %s", esp_err_to_name(rv));
